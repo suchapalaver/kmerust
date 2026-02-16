@@ -7,7 +7,9 @@
 
 use bytes::Bytes;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use kmerust::kmer::{unpack_to_bytes, Kmer, KmerLength};
+use kmerust::kmer::{
+    pack_canonical, reverse_complement_bits, unpack_to_bytes, validate_and_pack, Kmer, KmerLength,
+};
 use kmerust::run::count_kmers;
 use kmerust::streaming::{count_kmers_from_sequences, count_kmers_streaming};
 use std::io::Write;
@@ -187,6 +189,70 @@ fn bench_count_from_sequences(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_validate_and_pack(c: &mut Criterion) {
+    let mut group = c.benchmark_group("validate_and_pack");
+
+    for k in [5, 11, 21, 31] {
+        let seq = "ACGT".repeat(k / 4 + 1);
+        let bytes = &seq.as_bytes()[..k];
+
+        group.bench_with_input(BenchmarkId::from_parameter(k), &bytes, |b, bytes| {
+            b.iter(|| validate_and_pack(black_box(bytes)))
+        });
+    }
+
+    group.finish();
+}
+
+fn bench_pack_canonical(c: &mut Criterion) {
+    let mut group = c.benchmark_group("pack_canonical");
+
+    for k in [5, 11, 21, 31] {
+        let seq = "ACGT".repeat(k / 4 + 1);
+        let bytes = &seq.as_bytes()[..k];
+
+        group.bench_with_input(BenchmarkId::from_parameter(k), &bytes, |b, bytes| {
+            b.iter(|| pack_canonical(black_box(bytes), black_box(k)))
+        });
+    }
+
+    group.finish();
+}
+
+fn bench_pack_canonical_needs_rc(c: &mut Criterion) {
+    let mut group = c.benchmark_group("pack_canonical_needs_rc");
+
+    for k in [5, 11, 21, 31] {
+        let seq = "T".repeat(k);
+        let bytes = seq.as_bytes();
+
+        group.bench_with_input(BenchmarkId::from_parameter(k), &bytes, |b, bytes| {
+            b.iter(|| pack_canonical(black_box(bytes), black_box(k)))
+        });
+    }
+
+    group.finish();
+}
+
+fn bench_reverse_complement_bits(c: &mut Criterion) {
+    let mut group = c.benchmark_group("reverse_complement_bits");
+
+    for k in [5, 11, 21, 31] {
+        let seq = "ACGT".repeat(k / 4 + 1);
+        let bytes = Bytes::copy_from_slice(&seq.as_bytes()[..k]);
+        let packed = Kmer::from_sub(bytes).unwrap().pack();
+        let bits = packed.packed_bits();
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(k),
+            &(bits, k),
+            |b, &(bits, k)| b.iter(|| reverse_complement_bits(black_box(bits), black_box(k))),
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_from_sub,
@@ -195,6 +261,10 @@ criterion_group!(
     bench_canonical_no_alloc,
     bench_canonical_needs_alloc,
     bench_unpack,
+    bench_validate_and_pack,
+    bench_pack_canonical,
+    bench_pack_canonical_needs_rc,
+    bench_reverse_complement_bits,
     bench_count_kmers_small,
     bench_count_kmers_streaming,
     bench_count_from_sequences,

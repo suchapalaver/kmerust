@@ -7,7 +7,7 @@ use crate::{
     cli::OutputFormat,
     format::SequenceFormat,
     input::Input,
-    kmer::{unpack_to_string, Kmer, KmerLength},
+    kmer::{pack_canonical, unpack_to_string, KmerLength},
     progress::{Progress, ProgressTracker},
     reader::{read, read_with_quality, SequenceWithQuality},
     streaming::count_kmers_stdin_with_format,
@@ -547,27 +547,19 @@ impl KmerMap {
                 }
             }
 
-            let sub = seq.slice(i..i + k);
-
-            match Kmer::from_sub(sub) {
-                Ok(unpacked) => {
-                    self.process_valid_kmer(unpacked);
+            match pack_canonical(&seq[i..i + k], k) {
+                Ok(canonical_bits) => {
+                    self.0
+                        .entry(canonical_bits)
+                        .and_modify(|c| *c = c.saturating_add(1))
+                        .or_insert(1);
                     i += 1;
                 }
                 Err(err) => {
-                    // Skip past the invalid base
                     i += err.position + 1;
                 }
             }
         }
-    }
-
-    fn process_valid_kmer(&self, unpacked: Kmer) {
-        let canonical = unpacked.pack().canonical();
-        self.0
-            .entry(canonical.packed_bits())
-            .and_modify(|c| *c = c.saturating_add(1))
-            .or_insert(1);
     }
 
     fn into_hashmap(self, k: KmerLength) -> HashMap<String, u64> {
@@ -618,27 +610,19 @@ impl<F: Fn(Progress) + Send + Sync + 'static> KmerMapWithProgress<F> {
         let mut i = 0;
 
         while i <= seq.len() - k {
-            let sub = seq.slice(i..i + k);
-
-            match Kmer::from_sub(sub) {
-                Ok(unpacked) => {
-                    self.process_valid_kmer(unpacked);
+            match pack_canonical(&seq[i..i + k], k) {
+                Ok(canonical_bits) => {
+                    self.map
+                        .entry(canonical_bits)
+                        .and_modify(|c| *c = c.saturating_add(1))
+                        .or_insert(1);
                     i += 1;
                 }
                 Err(err) => {
-                    // Skip past the invalid base
                     i += err.position + 1;
                 }
             }
         }
-    }
-
-    fn process_valid_kmer(&self, unpacked: Kmer) {
-        let canonical = unpacked.pack().canonical();
-        self.map
-            .entry(canonical.packed_bits())
-            .and_modify(|c| *c = c.saturating_add(1))
-            .or_insert(1);
     }
 
     fn into_hashmap(self, k: KmerLength) -> HashMap<String, u64> {

@@ -5,8 +5,6 @@
 //! - Computing canonical k-mers (lexicographically smaller of k-mer/reverse-complement)
 //! - Converting between byte and packed representations
 
-use std::cmp::Ordering;
-
 use bytes::Bytes;
 
 use crate::error::KmerLengthError;
@@ -32,7 +30,9 @@ const PACK_TABLE: [u64; 256] = {
 };
 
 /// Lookup table for complement bases (not reverse - just the complement).
-/// A<->T, C<->G. Used for computing reverse complement without allocation.
+/// A<->T, C<->G. Retained for the public API; the hot path uses bit-level
+/// reverse complement via [`reverse_complement_bits`].
+#[allow(dead_code)]
 const COMPLEMENT_TABLE: [u8; 256] = {
     let mut table = [0u8; 256];
     table[b'A' as usize] = b'T';
@@ -346,36 +346,16 @@ impl Kmer<Packed> {
     /// assert!(!kmer.is_reverse_complement());
     /// ```
     pub fn canonical(self) -> Kmer<Canonical> {
-        // Compare original and reverse complement without allocating.
-        // Iterate from both ends simultaneously, comparing complement(reverse[i]) with forward[i].
-        let use_reverse_complement = self
-            .bytes
-            .iter()
-            .zip(
-                self.bytes
-                    .iter()
-                    .rev()
-                    .map(|&b| COMPLEMENT_TABLE[b as usize]),
-            )
-            .find_map(|(&fwd, rc)| match fwd.cmp(&rc) {
-                Ordering::Less => Some(false),   // forward is smaller, keep original
-                Ordering::Greater => Some(true), // reverse complement is smaller
-                Ordering::Equal => None,         // continue comparing
-            })
-            .unwrap_or(false); // palindrome: use original
+        let k = self.bytes.len();
+        let rc_bits = reverse_complement_bits(self.packed_bits, k);
+        let use_reverse_complement = rc_bits < self.packed_bits;
 
         if use_reverse_complement {
-            // Only allocate if we need the reverse complement
-            let reverse_complement: Bytes = self
-                .bytes
-                .iter()
-                .rev()
-                .map(|&b| COMPLEMENT_TABLE[b as usize])
-                .collect();
-            let packed_bits = pack_bytes(&reverse_complement);
+            // Reconstruct RC bytes from packed bits (for public API consumers)
+            let rc_bytes = unpack_to_bytes_from_raw(rc_bits, k);
             Kmer {
-                bytes: reverse_complement,
-                packed_bits,
+                bytes: rc_bytes,
+                packed_bits: rc_bits,
                 is_reverse_complement: true,
                 _state: PhantomData,
             }
@@ -468,6 +448,162 @@ fn pack_bytes(bytes: &[u8]) -> u64 {
     bytes
         .iter()
         .fold(0u64, |acc, &b| (acc << 2) | PACK_TABLE[b as usize])
+}
+
+/// Unpacks packed bits to `Bytes` using a raw `usize` k.
+///
+/// Internal helper for use within the module where k is already validated
+/// (e.g., from `bytes.len()` of a validated `Kmer`).
+#[inline]
+fn unpack_to_bytes_from_raw(packed_bits: u64, k: usize) -> Bytes {
+    (0..k)
+        .map(|i| {
+            let shift = (k - 1 - i) * 2;
+            let bits = ((packed_bits >> shift) & 0b11) as usize;
+            UNPACK_TABLE[bits]
+        })
+        .collect()
+}
+
+// ============================================================================
+// Zero-Copy Fast Path Functions
+// ============================================================================
+
+/// Computes the reverse complement of packed k-mer bits using pure arithmetic.
+///
+/// Each 2-bit pair is complemented (A<->T = 0<->3, C<->G = 1<->2, i.e. XOR with 3),
+/// then the order of pairs is reversed.
+///
+/// # Arguments
+///
+/// * `bits` - Packed 2-bit representation of a k-mer
+/// * `k` - K-mer length (number of bases)
+///
+/// # Examples
+///
+/// ```
+/// use kmerust::kmer::reverse_complement_bits;
+///
+/// // ACGT (0b00_01_10_11) -> reverse complement ACGT (palindrome)
+/// assert_eq!(reverse_complement_bits(0b00_01_10_11, 4), 0b00_01_10_11);
+///
+/// // AAA (0b00_00_00) -> TTT (0b11_11_11)
+/// assert_eq!(reverse_complement_bits(0b00_00_00, 3), 0b11_11_11);
+///
+/// // TTT (0b11_11_11) -> AAA (0b00_00_00)
+/// assert_eq!(reverse_complement_bits(0b11_11_11, 3), 0b00_00_00);
+/// ```
+#[inline]
+pub const fn reverse_complement_bits(bits: u64, k: usize) -> u64 {
+    // Step 1: Complement all 2-bit pairs (A<->T, C<->G is XOR with 0b11 per pair)
+    let mask = if k == 32 {
+        u64::MAX
+    } else {
+        (1u64 << (2 * k)) - 1
+    };
+    let mut rc = (!bits) & mask;
+
+    // Step 2: Reverse the order of 2-bit pairs using parallel swap
+    // Swap adjacent 2-bit groups
+    rc = ((rc >> 2) & 0x3333_3333_3333_3333) | ((rc & 0x3333_3333_3333_3333) << 2);
+    // Swap adjacent 4-bit groups
+    rc = ((rc >> 4) & 0x0F0F_0F0F_0F0F_0F0F) | ((rc & 0x0F0F_0F0F_0F0F_0F0F) << 4);
+    // Swap adjacent bytes
+    rc = ((rc >> 8) & 0x00FF_00FF_00FF_00FF) | ((rc & 0x00FF_00FF_00FF_00FF) << 8);
+    // Swap adjacent 2-byte groups
+    rc = ((rc >> 16) & 0x0000_FFFF_0000_FFFF) | ((rc & 0x0000_FFFF_0000_FFFF) << 16);
+    // Swap 4-byte halves
+    rc = rc.rotate_left(32);
+
+    // Step 3: Shift right to align k bases (they're now at the top of the u64)
+    rc >> (64 - 2 * k)
+}
+
+/// Returns the canonical packed bits for a k-mer (min of forward and reverse complement).
+///
+/// This is a pure arithmetic operation with zero allocation.
+#[inline]
+pub const fn canonical_bits(packed: u64, k: usize) -> u64 {
+    let rc = reverse_complement_bits(packed, k);
+    if packed < rc {
+        packed
+    } else {
+        rc
+    }
+}
+
+/// Validates a DNA byte slice and packs it into a 64-bit integer in a single pass.
+///
+/// Returns the packed bits directly without any heap allocation.
+/// Both uppercase and lowercase bases are accepted.
+///
+/// # Errors
+///
+/// Returns [`InvalidBaseError`] with the position and value of the first invalid byte.
+///
+/// # Examples
+///
+/// ```
+/// use kmerust::kmer::validate_and_pack;
+///
+/// let bits = validate_and_pack(b"ACGT").unwrap();
+/// assert_eq!(bits, 0b00_01_10_11);
+///
+/// // Lowercase works too
+/// let bits = validate_and_pack(b"acgt").unwrap();
+/// assert_eq!(bits, 0b00_01_10_11);
+///
+/// // Invalid bases are rejected
+/// assert!(validate_and_pack(b"ACNT").is_err());
+/// ```
+#[inline]
+pub fn validate_and_pack(seq: &[u8]) -> Result<u64, InvalidBaseError> {
+    let mut packed: u64 = 0;
+    for (i, &b) in seq.iter().enumerate() {
+        match b {
+            b'A' | b'a' | b'C' | b'c' | b'G' | b'g' | b'T' | b't' => {
+                packed = (packed << 2) | PACK_TABLE[b as usize];
+            }
+            _ => {
+                return Err(InvalidBaseError {
+                    base: b,
+                    position: i,
+                });
+            }
+        }
+    }
+    Ok(packed)
+}
+
+/// Validates, packs, and canonicalizes a DNA byte slice in one fused operation.
+///
+/// This is the zero-allocation fast path for the k-mer counting hot loop.
+/// Combines validation, 2-bit packing, and canonical selection without any
+/// heap allocation.
+///
+/// # Arguments
+///
+/// * `seq` - A byte slice of exactly k DNA bases
+/// * `k` - The k-mer length (must equal `seq.len()`)
+///
+/// # Errors
+///
+/// Returns [`InvalidBaseError`] with the position of the first invalid byte.
+///
+/// # Examples
+///
+/// ```
+/// use kmerust::kmer::pack_canonical;
+///
+/// // GATTACA and its RC TGTAATC -> GATTACA is smaller
+/// let bits = pack_canonical(b"GATTACA", 7).unwrap();
+/// let rc_bits = pack_canonical(b"TGTAATC", 7).unwrap();
+/// assert_eq!(bits, rc_bits); // both map to same canonical form
+/// ```
+#[inline]
+pub fn pack_canonical(seq: &[u8], k: usize) -> Result<u64, InvalidBaseError> {
+    let packed = validate_and_pack(seq)?;
+    Ok(canonical_bits(packed, k))
 }
 
 /// A single DNA base (nucleotide).

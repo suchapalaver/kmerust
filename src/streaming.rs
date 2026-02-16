@@ -50,7 +50,7 @@ use crate::{
     error::KmeRustError,
     format::SequenceFormat,
     input::Input,
-    kmer::{unpack_to_string, Kmer, KmerLength},
+    kmer::{pack_canonical, unpack_to_string, KmerLength},
 };
 
 #[cfg(feature = "tracing")]
@@ -644,12 +644,9 @@ fn process_sequence_into_counts(
             }
         }
 
-        let sub = Bytes::copy_from_slice(&seq[i..i + k_val]);
-
-        match Kmer::from_sub(sub) {
-            Ok(unpacked) => {
-                let canonical = unpacked.pack().canonical();
-                *counts.entry(canonical.packed_bits()).or_insert(0) += 1;
+        match pack_canonical(&seq[i..i + k_val], k_val) {
+            Ok(canonical_bits) => {
+                *counts.entry(canonical_bits).or_insert(0) += 1;
                 i += 1;
             }
             Err(err) => {
@@ -813,12 +810,9 @@ impl SequentialKmerCounter {
                 }
             }
 
-            let sub = Bytes::copy_from_slice(&seq[i..i + k_val]);
-
-            match Kmer::from_sub(sub) {
-                Ok(unpacked) => {
-                    let canonical = unpacked.pack().canonical();
-                    *self.counts.entry(canonical.packed_bits()).or_insert(0) += 1;
+            match pack_canonical(&seq[i..i + k_val], k_val) {
+                Ok(canonical_bits) => {
+                    *self.counts.entry(canonical_bits).or_insert(0) += 1;
                     i += 1;
                 }
                 Err(err) => {
@@ -1090,11 +1084,12 @@ impl StreamingKmerCounter {
                 }
             }
 
-            let sub = seq.slice(i..i + k_val);
-
-            match Kmer::from_sub(sub) {
-                Ok(unpacked) => {
-                    self.process_valid_kmer(unpacked);
+            match pack_canonical(&seq[i..i + k_val], k_val) {
+                Ok(canonical_bits) => {
+                    self.counts
+                        .entry(canonical_bits)
+                        .and_modify(|c| *c = c.saturating_add(1))
+                        .or_insert(1);
                     i += 1;
                 }
                 Err(err) => {
@@ -1102,14 +1097,6 @@ impl StreamingKmerCounter {
                 }
             }
         }
-    }
-
-    fn process_valid_kmer(&self, unpacked: Kmer) {
-        let canonical = unpacked.pack().canonical();
-        self.counts
-            .entry(canonical.packed_bits())
-            .and_modify(|c| *c = c.saturating_add(1))
-            .or_insert(1);
     }
 }
 
