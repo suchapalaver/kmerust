@@ -574,6 +574,10 @@ pub fn validate_and_pack(seq: &[u8]) -> Result<u64, InvalidBaseError> {
 ///
 /// Returns [`InvalidBaseError`] with the position of the first invalid byte.
 ///
+/// # Panics
+///
+/// Panics in debug builds if `seq` is empty.
+///
 /// # Examples
 ///
 /// ```
@@ -586,6 +590,7 @@ pub fn validate_and_pack(seq: &[u8]) -> Result<u64, InvalidBaseError> {
 /// ```
 #[inline]
 pub fn pack_canonical(seq: &[u8]) -> Result<u64, InvalidBaseError> {
+    debug_assert!(!seq.is_empty(), "pack_canonical requires a non-empty slice");
     let packed = validate_and_pack(seq)?;
     Ok(canonical_bits(packed, seq.len()))
 }
@@ -999,6 +1004,12 @@ pub mod test {
         // ACGT is palindromic, forward == RC, should return forward value
         let acgt = 0b00_01_10_11u64;
         assert_eq!(canonical_bits(acgt, 4), acgt);
+    }
+
+    #[test]
+    #[should_panic(expected = "pack_canonical requires a non-empty slice")]
+    fn pack_canonical_panics_on_empty_slice() {
+        let _ = pack_canonical(b"");
     }
 
     #[test]
