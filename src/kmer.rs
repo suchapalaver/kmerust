@@ -482,6 +482,9 @@ fn unpack_to_bytes_from_raw(packed_bits: u64, k: usize) -> Bytes {
 /// Panics in debug builds if `k` is 0 or greater than 32.
 #[inline]
 pub const fn reverse_complement_bits(bits: u64, k: usize) -> u64 {
+    // SAFETY: k is only validated via debug_assert — in release builds, k=0
+    // causes a shift by 64 (Rust wraps to 0) and k>32 overflows the mask.
+    // All internal callers guarantee 1 <= k <= 32 via KmerLength validation.
     debug_assert!(k >= 1 && k <= 32, "k must be 1..=32");
 
     // Step 1: Complement all 2-bit pairs (A<->T, C<->G is XOR with 0b11 per pair)
@@ -534,7 +537,7 @@ pub const fn canonical_bits(packed: u64, k: usize) -> u64 {
 ///
 /// # Panics
 ///
-/// Panics in debug builds if `seq` is empty.
+/// Panics in debug builds if `seq` is empty or longer than 32.
 ///
 /// # Examples
 ///
@@ -556,6 +559,11 @@ pub fn validate_and_pack(seq: &[u8]) -> Result<u64, InvalidBaseError> {
     debug_assert!(
         !seq.is_empty(),
         "validate_and_pack requires a non-empty slice"
+    );
+    debug_assert!(
+        seq.len() <= 32,
+        "validate_and_pack: sequence length {len} exceeds maximum k-mer size 32",
+        len = seq.len()
     );
     let mut packed: u64 = 0;
     for (i, &b) in seq.iter().enumerate() {
