@@ -12,7 +12,7 @@
 
 use bytes::Bytes;
 use kmerust::index::{load_index, save_index, KmerIndex};
-use kmerust::kmer::{unpack_to_bytes, unpack_to_string, Kmer, KmerLength};
+use kmerust::kmer::{pack_canonical, unpack_to_bytes, unpack_to_string, Kmer, KmerLength};
 use kmerust::streaming::count_kmers_from_sequences;
 use proptest::prelude::*;
 use std::collections::HashMap;
@@ -326,6 +326,25 @@ proptest! {
         prop_assert_eq!(
             kmer_count, 2,
             "K-mer and RC should have combined count 2, got {}", kmer_count
+        );
+    }
+
+    /// The zero-allocation fast path should produce identical results to the
+    /// type-state pipeline for all valid DNA sequences.
+    ///
+    /// Property: pack_canonical(seq) == Kmer::from_sub(seq).pack().canonical().packed_bits()
+    #[test]
+    fn fast_path_matches_type_state_pipeline(seq in dna_sequence(1, 32)) {
+        let via_pipeline = Kmer::from_sub(Bytes::from(seq.clone()))
+            .unwrap()
+            .pack()
+            .canonical()
+            .packed_bits();
+        let via_fast_path = pack_canonical(seq.as_bytes()).unwrap();
+
+        prop_assert_eq!(
+            via_pipeline, via_fast_path,
+            "mismatch for sequence {}", seq
         );
     }
 }

@@ -460,7 +460,7 @@ fn unpack_to_bytes_from_raw(packed_bits: u64, k: usize) -> Bytes {
 /// # Arguments
 ///
 /// * `bits` - Packed 2-bit representation of a k-mer
-/// * `k` - K-mer length (number of bases)
+/// * `k` - K-mer length (number of bases, must be 1..=32)
 ///
 /// # Examples
 ///
@@ -476,8 +476,14 @@ fn unpack_to_bytes_from_raw(packed_bits: u64, k: usize) -> Bytes {
 /// // TTT (0b11_11_11) -> AAA (0b00_00_00)
 /// assert_eq!(reverse_complement_bits(0b11_11_11, 3), 0b00_00_00);
 /// ```
+///
+/// # Panics
+///
+/// Panics in debug builds if `k` is 0 or greater than 32.
 #[inline]
 pub const fn reverse_complement_bits(bits: u64, k: usize) -> u64 {
+    debug_assert!(k >= 1 && k <= 32, "k must be 1..=32");
+
     // Step 1: Complement all 2-bit pairs (A<->T, C<->G is XOR with 0b11 per pair)
     let mask = if k == 32 {
         u64::MAX
