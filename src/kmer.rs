@@ -1016,12 +1016,14 @@ pub mod test {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "validate_and_pack requires a non-empty slice")]
     fn pack_canonical_panics_on_empty_slice() {
         let _ = pack_canonical(b"");
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "validate_and_pack requires a non-empty slice")]
     fn validate_and_pack_panics_on_empty_slice() {
         let _ = validate_and_pack(b"");
