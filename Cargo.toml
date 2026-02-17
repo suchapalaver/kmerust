@@ -11,7 +11,7 @@ name = "kmerust"
 readme = "./README.md"
 repository = "https://github.com/suchapalaver/kmerust"
 rust-version = "1.75"
-version = "0.3.1"
+version = "0.3.2"
 
 [dependencies]
 bio = "3.0.0"
