@@ -510,11 +510,13 @@ pub const fn reverse_complement_bits(bits: u64, k: usize) -> u64 {
 
 /// Returns the canonical packed bits for a k-mer (min of forward and reverse complement).
 ///
+/// For palindromes (where forward == reverse complement), returns the forward value.
+///
 /// This is a pure arithmetic operation with zero allocation.
 #[inline]
 pub const fn canonical_bits(packed: u64, k: usize) -> u64 {
     let rc = reverse_complement_bits(packed, k);
-    if packed < rc {
+    if packed <= rc {
         packed
     } else {
         rc
@@ -529,6 +531,10 @@ pub const fn canonical_bits(packed: u64, k: usize) -> u64 {
 /// # Errors
 ///
 /// Returns [`InvalidBaseError`] with the position and value of the first invalid byte.
+///
+/// # Panics
+///
+/// Panics in debug builds if `seq` is empty.
 ///
 /// # Examples
 ///
@@ -547,6 +553,10 @@ pub const fn canonical_bits(packed: u64, k: usize) -> u64 {
 /// ```
 #[inline]
 pub fn validate_and_pack(seq: &[u8]) -> Result<u64, InvalidBaseError> {
+    debug_assert!(
+        !seq.is_empty(),
+        "validate_and_pack requires a non-empty slice"
+    );
     let mut packed: u64 = 0;
     for (i, &b) in seq.iter().enumerate() {
         match b {
@@ -576,7 +586,7 @@ pub fn validate_and_pack(seq: &[u8]) -> Result<u64, InvalidBaseError> {
 ///
 /// # Panics
 ///
-/// Panics in debug builds if `seq` is empty.
+/// Panics in debug builds if `seq` is empty (propagated from [`validate_and_pack`]).
 ///
 /// # Examples
 ///
@@ -590,7 +600,6 @@ pub fn validate_and_pack(seq: &[u8]) -> Result<u64, InvalidBaseError> {
 /// ```
 #[inline]
 pub fn pack_canonical(seq: &[u8]) -> Result<u64, InvalidBaseError> {
-    debug_assert!(!seq.is_empty(), "pack_canonical requires a non-empty slice");
     let packed = validate_and_pack(seq)?;
     Ok(canonical_bits(packed, seq.len()))
 }
@@ -1007,9 +1016,15 @@ pub mod test {
     }
 
     #[test]
-    #[should_panic(expected = "pack_canonical requires a non-empty slice")]
+    #[should_panic(expected = "validate_and_pack requires a non-empty slice")]
     fn pack_canonical_panics_on_empty_slice() {
         let _ = pack_canonical(b"");
+    }
+
+    #[test]
+    #[should_panic(expected = "validate_and_pack requires a non-empty slice")]
+    fn validate_and_pack_panics_on_empty_slice() {
+        let _ = validate_and_pack(b"");
     }
 
     #[test]
