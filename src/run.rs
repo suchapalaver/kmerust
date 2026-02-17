@@ -547,7 +547,7 @@ impl KmerMap {
                 }
             }
 
-            match pack_canonical(&seq[i..i + k], k) {
+            match pack_canonical(&seq[i..i + k]) {
                 Ok(canonical_bits) => {
                     self.0
                         .entry(canonical_bits)
@@ -610,7 +610,7 @@ impl<F: Fn(Progress) + Send + Sync + 'static> KmerMapWithProgress<F> {
         let mut i = 0;
 
         while i <= seq.len() - k {
-            match pack_canonical(&seq[i..i + k], k) {
+            match pack_canonical(&seq[i..i + k]) {
                 Ok(canonical_bits) => {
                     self.map
                         .entry(canonical_bits)

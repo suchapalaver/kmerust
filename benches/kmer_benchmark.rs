@@ -212,7 +212,7 @@ fn bench_pack_canonical(c: &mut Criterion) {
         let bytes = &seq.as_bytes()[..k];
 
         group.bench_with_input(BenchmarkId::from_parameter(k), &bytes, |b, bytes| {
-            b.iter(|| pack_canonical(black_box(bytes), black_box(k)))
+            b.iter(|| pack_canonical(black_box(bytes)))
         });
     }
 
@@ -227,7 +227,7 @@ fn bench_pack_canonical_needs_rc(c: &mut Criterion) {
         let bytes = seq.as_bytes();
 
         group.bench_with_input(BenchmarkId::from_parameter(k), &bytes, |b, bytes| {
-            b.iter(|| pack_canonical(black_box(bytes), black_box(k)))
+            b.iter(|| pack_canonical(black_box(bytes)))
         });
     }
 

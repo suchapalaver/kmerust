@@ -644,7 +644,7 @@ fn process_sequence_into_counts(
             }
         }
 
-        match pack_canonical(&seq[i..i + k_val], k_val) {
+        match pack_canonical(&seq[i..i + k_val]) {
             Ok(canonical_bits) => {
                 *counts.entry(canonical_bits).or_insert(0) += 1;
                 i += 1;
@@ -810,7 +810,7 @@ impl SequentialKmerCounter {
                 }
             }
 
-            match pack_canonical(&seq[i..i + k_val], k_val) {
+            match pack_canonical(&seq[i..i + k_val]) {
                 Ok(canonical_bits) => {
                     *self.counts.entry(canonical_bits).or_insert(0) += 1;
                     i += 1;
@@ -1084,7 +1084,7 @@ impl StreamingKmerCounter {
                 }
             }
 
-            match pack_canonical(&seq[i..i + k_val], k_val) {
+            match pack_canonical(&seq[i..i + k_val]) {
                 Ok(canonical_bits) => {
                     self.counts
                         .entry(canonical_bits)

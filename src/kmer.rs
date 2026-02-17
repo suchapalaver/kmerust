@@ -29,23 +29,6 @@ const PACK_TABLE: [u64; 256] = {
     table
 };
 
-/// Lookup table for complement bases (not reverse - just the complement).
-/// A<->T, C<->G. Retained for the public API; the hot path uses bit-level
-/// reverse complement via [`reverse_complement_bits`].
-#[allow(dead_code)]
-const COMPLEMENT_TABLE: [u8; 256] = {
-    let mut table = [0u8; 256];
-    table[b'A' as usize] = b'T';
-    table[b'a' as usize] = b'T';
-    table[b'C' as usize] = b'G';
-    table[b'c' as usize] = b'G';
-    table[b'G' as usize] = b'C';
-    table[b'g' as usize] = b'C';
-    table[b'T' as usize] = b'A';
-    table[b't' as usize] = b'A';
-    table
-};
-
 /// Lookup table for unpacking 2-bit values back to ASCII bytes.
 const UNPACK_TABLE: [u8; 4] = [b'A', b'C', b'G', b'T'];
 
@@ -581,11 +564,6 @@ pub fn validate_and_pack(seq: &[u8]) -> Result<u64, InvalidBaseError> {
 /// Combines validation, 2-bit packing, and canonical selection without any
 /// heap allocation.
 ///
-/// # Arguments
-///
-/// * `seq` - A byte slice of exactly k DNA bases
-/// * `k` - The k-mer length (must equal `seq.len()`)
-///
 /// # Errors
 ///
 /// Returns [`InvalidBaseError`] with the position of the first invalid byte.
@@ -596,14 +574,14 @@ pub fn validate_and_pack(seq: &[u8]) -> Result<u64, InvalidBaseError> {
 /// use kmerust::kmer::pack_canonical;
 ///
 /// // GATTACA and its RC TGTAATC -> GATTACA is smaller
-/// let bits = pack_canonical(b"GATTACA", 7).unwrap();
-/// let rc_bits = pack_canonical(b"TGTAATC", 7).unwrap();
+/// let bits = pack_canonical(b"GATTACA").unwrap();
+/// let rc_bits = pack_canonical(b"TGTAATC").unwrap();
 /// assert_eq!(bits, rc_bits); // both map to same canonical form
 /// ```
 #[inline]
-pub fn pack_canonical(seq: &[u8], k: usize) -> Result<u64, InvalidBaseError> {
+pub fn pack_canonical(seq: &[u8]) -> Result<u64, InvalidBaseError> {
     let packed = validate_and_pack(seq)?;
-    Ok(canonical_bits(packed, k))
+    Ok(canonical_bits(packed, seq.len()))
 }
 
 /// A single DNA base (nucleotide).
@@ -974,6 +952,77 @@ pub mod test {
         // ACGT = 00 01 10 11 = 27
         let s = unpack_to_string(0b00_01_10_11, k);
         assert_eq!(s, "ACGT");
+    }
+
+    #[test]
+    fn reverse_complement_bits_single_base() {
+        // A(00) -> T(11), T(11) -> A(00), C(01) -> G(10), G(10) -> C(01)
+        assert_eq!(reverse_complement_bits(0b00, 1), 0b11);
+        assert_eq!(reverse_complement_bits(0b11, 1), 0b00);
+        assert_eq!(reverse_complement_bits(0b01, 1), 0b10);
+        assert_eq!(reverse_complement_bits(0b10, 1), 0b01);
+    }
+
+    #[test]
+    fn reverse_complement_bits_max_k() {
+        // k=32: all A's -> all T's
+        let all_a = 0u64;
+        let all_t = u64::MAX; // 32 T bases = all 1s
+        assert_eq!(reverse_complement_bits(all_a, 32), all_t);
+        assert_eq!(reverse_complement_bits(all_t, 32), all_a);
+    }
+
+    #[test]
+    fn reverse_complement_bits_palindrome() {
+        // ACGT is a palindrome (RC = ACGT)
+        assert_eq!(reverse_complement_bits(0b00_01_10_11, 4), 0b00_01_10_11);
+
+        // AT is a palindrome (RC = AT)
+        assert_eq!(reverse_complement_bits(0b00_11, 2), 0b00_11);
+    }
+
+    #[test]
+    fn canonical_bits_returns_smaller() {
+        // AAA(0b000000) vs TTT(0b111111) -> AAA wins
+        assert_eq!(canonical_bits(0b00_00_00, 3), 0b00_00_00);
+        assert_eq!(canonical_bits(0b11_11_11, 3), 0b00_00_00);
+    }
+
+    #[test]
+    fn canonical_bits_palindrome_returns_forward() {
+        // ACGT is palindromic, forward == RC, should return forward value
+        let acgt = 0b00_01_10_11u64;
+        assert_eq!(canonical_bits(acgt, 4), acgt);
+    }
+
+    #[test]
+    fn validate_and_pack_rejects_invalid() {
+        let err = validate_and_pack(b"ACN").unwrap_err();
+        assert_eq!(err.position, 2);
+        assert_eq!(err.base, b'N');
+    }
+
+    #[test]
+    fn pack_canonical_matches_type_state_pipeline() {
+        let sequences = [
+            "GATTACA",
+            "TGTAATC",
+            "AAA",
+            "TTT",
+            "ACGT",
+            "A",
+            "T",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", // k=32
+        ];
+        for seq in sequences {
+            let via_pipeline = Kmer::from_sub(Bytes::copy_from_slice(seq.as_bytes()))
+                .unwrap()
+                .pack()
+                .canonical()
+                .packed_bits();
+            let via_fast_path = pack_canonical(seq.as_bytes()).unwrap();
+            assert_eq!(via_pipeline, via_fast_path, "mismatch for {seq}");
+        }
     }
 
     #[test]
